@@ -1,1 +1,0 @@
-export { ModelAvatar } from './ModelAvatar';
