@@ -23,6 +23,13 @@
         "-y",
         "@playwright/mcp@latest"
       ]
+    },
+    "geminiCLI": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "gemini-mcp-tool"
+      ]
     }
   },
   "enabledTools": {
@@ -68,6 +75,14 @@
       "browser_select_option",
       "browser_tabs",
       "browser_wait_for"
+    ],
+    "geminiCLI": [
+      "ask-gemini",
+      "ping",
+      "Help",
+      "brainstorm",
+      "fetch-chunk",
+      "timeout-test"
     ]
   }
 }
