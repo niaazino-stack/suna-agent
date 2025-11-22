@@ -1,407 +1,94 @@
-import json
-import base64
-from datetime import datetime
-from typing import Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends, Request, Body
+"""
+This module provides endpoints for managing the tools configured for an agent.
 
-from core.utils.auth_utils import verify_and_get_user_id_from_jwt
+It has been refactored to use a simplified, ownership-based authorization model
+and to remove legacy concepts like limit checks and public resources.
+"""
+
+from typing import List, Dict, Any
+from fastapi import APIRouter, HTTPException, Depends
+
+# Core dependencies
+from core.utils.auth_utils import require_agent_ownership
 from core.utils.logger import logger
-from core.utils.config import config, EnvMode
+from core.versioning.version_service import get_version_service, VersionService, AgentVersion
 
-from . import core_utils as utils
-from .core_utils import _get_version_service
+# Local dependencies
+from .api_models import AgentToolsResponse, AgentToolsUpdateRequest
 
 router = APIRouter(tags=["agent-tools"])
 
-@router.get("/agents/{agent_id}/custom-mcp-tools", summary="Get Agent Custom MCP Tools", operation_id="get_agent_custom_mcp_tools")
-async def get_custom_mcp_tools_for_agent(
-    agent_id: str,
-    request: Request,
-    user_id: str = Depends(verify_and_get_user_id_from_jwt)
-):
-    logger.debug(f"Getting custom MCP tools for agent {agent_id}, user {user_id}")
+async def _get_active_version_for_agent(agent: dict, version_service: VersionService) -> AgentVersion:
+    """Helper to retrieve the active version for an authorized agent."""
+    version_id = agent.get('current_version_id')
+    if not version_id:
+        # This can happen for newly created agents before the first version is fully set.
+        # Return a default/empty version object.
+        logger.warning(f"Agent {agent['agent_id']} has no active version. Using default empty config.")
+        return AgentVersion(
+            version_id="", agent_id=agent['agent_id'], version_number=0, version_name="",
+            system_prompt="", created_by=agent['account_id']
+        )
     try:
-        client = await utils.db.client
-        agent_result = await client.table('agents').select('current_version_id').eq('agent_id', agent_id).eq('account_id', user_id).execute()
-        if not agent_result.data:
-            raise HTTPException(status_code=404, detail="Agent not found")
-        
-        agent = agent_result.data[0]
- 
-        agent_config = {}
-        if agent.get('current_version_id'):
-            version_result = await client.table('agent_versions')\
-                .select('config')\
-                .eq('version_id', agent['current_version_id'])\
-                .maybe_single()\
-                .execute()
-            if version_result.data and version_result.data.get('config'):
-                agent_config = version_result.data['config']
-        
-        tools = agent_config.get('tools', {})
-        custom_mcps = tools.get('custom_mcp', [])
-        
-        mcp_url = request.headers.get('X-MCP-URL')
-        mcp_type = request.headers.get('X-MCP-Type', 'sse')
-        
-        if not mcp_url:
-            raise HTTPException(status_code=400, detail="X-MCP-URL header is required")
-        
-        mcp_config = {
-            'url': mcp_url,
-            'type': mcp_type
-        }
-        
-        if 'X-MCP-Headers' in request.headers:
-            import json
-            try:
-                mcp_config['headers'] = json.loads(request.headers['X-MCP-Headers'])
-            except json.JSONDecodeError:
-                logger.warning("Failed to parse X-MCP-Headers as JSON")
-        
-        from core.mcp_module import mcp_service
-        discovery_result = await mcp_service.discover_custom_tools(mcp_type, mcp_config)
-        
-        existing_mcp = None
-        for mcp in custom_mcps:
-            if mcp_type == 'composio':
-                if (mcp.get('type') == 'composio' and 
-                    mcp.get('config', {}).get('profile_id') == mcp_url):
-                    existing_mcp = mcp
-                    break
-            else:
-                if (mcp.get('customType') == mcp_type and 
-                    mcp.get('config', {}).get('url') == mcp_url):
-                    existing_mcp = mcp
-                    break
-        
-        tools = []
-        enabled_tools = existing_mcp.get('enabledTools', []) if existing_mcp else []
-        
-        for tool in discovery_result.tools:
-            tools.append({
-                'name': tool['name'],
-                'description': tool.get('description', f'Tool from {mcp_type.upper()} MCP server'),
-                'enabled': tool['name'] in enabled_tools
-            })
-        
-        return {
-            'tools': tools,
-            'has_mcp_config': existing_mcp is not None,
-            'server_type': mcp_type,
-            'server_url': mcp_url
-        }
-        
-    except HTTPException:
-        raise
+        return await version_service.get_version_by_id(version_id, agent['account_id'])
     except Exception as e:
-        logger.error(f"Error getting custom MCP tools for agent {agent_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Error fetching active version {version_id} for agent {agent['agent_id']}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not load agent's current configuration.")
 
-@router.post("/agents/{agent_id}/custom-mcp-tools", summary="Update Agent Custom MCP Tools", operation_id="update_agent_custom_mcp_tools")
-async def update_custom_mcp_tools_for_agent(
-    agent_id: str,
-    request: dict,
-    user_id: str = Depends(verify_and_get_user_id_from_jwt)
-):
-    logger.debug(f"Updating custom MCP tools for agent {agent_id}, user {user_id}")
-    
-    try:
-        client = await utils.db.client
-        
-        agent_result = await client.table('agents').select('current_version_id').eq('agent_id', agent_id).eq('account_id', user_id).execute()
-        if not agent_result.data:
-            raise HTTPException(status_code=404, detail="Agent not found")
-        
-        agent = agent_result.data[0]
-        
-        agent_config = {}
-        if agent.get('current_version_id'):
-            version_result = await client.table('agent_versions')\
-                .select('config')\
-                .eq('version_id', agent['current_version_id'])\
-                .maybe_single()\
-                .execute()
-            if version_result.data and version_result.data.get('config'):
-                agent_config = version_result.data['config']
-        
-        tools = agent_config.get('tools', {})
-        custom_mcps = tools.get('custom_mcp', [])
-        
-        mcp_url = request.get('url')
-        mcp_type = request.get('type', 'sse')
-        enabled_tools = request.get('enabled_tools', [])
-        
-        if not mcp_url:
-            raise HTTPException(status_code=400, detail="MCP URL is required")
-        
-        updated = False
-        for i, mcp in enumerate(custom_mcps):
-            if mcp_type == 'composio':
-                # For Composio, match by profile_id
-                if (mcp.get('type') == 'composio' and 
-                    mcp.get('config', {}).get('profile_id') == mcp_url):
-                    custom_mcps[i]['enabledTools'] = enabled_tools
-                    updated = True
-                    break
-            else:
-                if (mcp.get('customType') == mcp_type and 
-                    mcp.get('config', {}).get('url') == mcp_url):
-                    custom_mcps[i]['enabledTools'] = enabled_tools
-                    updated = True
-                    break
-        
-        if not updated:
-            if config.ENV_MODE != EnvMode.LOCAL:
-                from core.utils.limits_checker import check_custom_worker_limit
-                limit_check = await check_custom_worker_limit(client, user_id)
-                
-                if not limit_check['can_create']:
-                    error_detail = {
-                        "message": f"Maximum of {limit_check['limit']} custom workers allowed for your current plan. You have {limit_check['current_count']} custom workers.",
-                        "current_count": limit_check['current_count'],
-                        "limit": limit_check['limit'],
-                        "tier_name": limit_check['tier_name'],
-                        "error_code": "CUSTOM_WORKER_LIMIT_EXCEEDED"
-                    }
-                    logger.warning(f"Custom worker limit exceeded for account {user_id}: {limit_check['current_count']}/{limit_check['limit']}")
-                    raise HTTPException(status_code=402, detail=error_detail)
-            
-            if mcp_type == 'composio':
-                try:
-                    from core.composio_integration.composio_profile_service import ComposioProfileService
-                    from core.services.supabase import DBConnection
-                    profile_service = ComposioProfileService(DBConnection())
- 
-                    profile_id = mcp_url
-                    mcp_config = await profile_service.get_mcp_config_for_agent(profile_id)
-                    mcp_config['enabledTools'] = enabled_tools
-                    custom_mcps.append(mcp_config)
-                except Exception as e:
-                    logger.error(f"Failed to get Composio profile config: {e}")
-                    raise HTTPException(status_code=400, detail=f"Failed to get Composio profile: {str(e)}")
-            else:
-                new_mcp_config = {
-                    "name": f"Custom MCP ({mcp_type.upper()})",
-                    "customType": mcp_type,
-                    "type": mcp_type,
-                    "config": {
-                        "url": mcp_url
-                    },
-                    "enabledTools": enabled_tools
-                }
-                custom_mcps.append(new_mcp_config)
-        
-        tools['custom_mcp'] = custom_mcps
-        agent_config['tools'] = tools
-        
-        from .versioning.version_service import get_version_service
-        try:
-            version_service = await get_version_service() 
-            new_version = await version_service.create_version(
-                agent_id=agent_id,
-                user_id=user_id,
-                system_prompt=agent_config.get('system_prompt', ''),
-                configured_mcps=agent_config.get('tools', {}).get('mcp', []),
-                custom_mcps=custom_mcps,
-                agentpress_tools=agent_config.get('tools', {}).get('agentpress', {}),
-                change_description=f"Updated custom MCP tools for {mcp_type}"
-            )
-            logger.debug(f"Created version {new_version.version_id} for custom MCP tools update on agent {agent_id}")
-        except Exception as e:
-            logger.error(f"Failed to create version for custom MCP tools update: {e}")
-            raise HTTPException(status_code=500, detail="Failed to save changes")
-        
-        return {
-            'success': True,
-            'enabled_tools': enabled_tools,
-            'total_tools': len(enabled_tools)
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating custom MCP tools for agent {agent_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@router.put("/agents/{agent_id}/custom-mcp-tools", summary="Update Agent Custom MCPs", operation_id="update_agent_custom_mcps")
-async def update_agent_custom_mcps(
-    agent_id: str,
-    request: dict,
-    user_id: str = Depends(verify_and_get_user_id_from_jwt)
-):
-    logger.debug(f"Updating agent {agent_id} custom MCPs for user {user_id}")
-    
-    try:
-        client = await utils.db.client
-        agent_result = await client.table('agents').select('current_version_id').eq('agent_id', agent_id).eq('account_id', user_id).execute()
-        if not agent_result.data:
-            raise HTTPException(status_code=404, detail="Agent not found")
-        
-        agent = agent_result.data[0]
-        
-        agent_config = {}
-        if agent.get('current_version_id'):
-            version_result = await client.table('agent_versions')\
-                .select('config')\
-                .eq('version_id', agent['current_version_id'])\
-                .maybe_single()\
-                .execute()
-            if version_result.data and version_result.data.get('config'):
-                agent_config = version_result.data['config']
-        
-        new_custom_mcps = request.get('custom_mcps', [])
-        if not new_custom_mcps:
-            raise HTTPException(status_code=400, detail="custom_mcps array is required")
-        
-        tools = agent_config.get('tools', {})
-        existing_custom_mcps = tools.get('custom_mcp', [])
-        
-        if config.ENV_MODE != EnvMode.LOCAL:
-            new_count = len(new_custom_mcps)
-            existing_count = len(existing_custom_mcps)
-            
-            if new_count > existing_count:
-                additional_workers_needed = new_count - existing_count
-                
-                from core.utils.limits_checker import check_custom_worker_limit
-                limit_check = await check_custom_worker_limit(client, user_id)
-                
-                total_after_adding = limit_check['current_count'] + additional_workers_needed
-                
-                if total_after_adding > limit_check['limit']:
-                    error_detail = {
-                        "message": f"Maximum of {limit_check['limit']} custom workers allowed for your current plan. You currently have {limit_check['current_count']} and are trying to add {additional_workers_needed} more.",
-                        "current_count": limit_check['current_count'],
-                        "limit": limit_check['limit'],
-                        "tier_name": limit_check['tier_name'],
-                        "error_code": "CUSTOM_WORKER_LIMIT_EXCEEDED"
-                    }
-                    logger.warning(f"Custom worker limit would be exceeded for account {user_id}: {limit_check['current_count']} + {additional_workers_needed} > {limit_check['limit']}")
-                    raise HTTPException(status_code=402, detail=error_detail)
-        
-        updated = False
-        for new_mcp in new_custom_mcps:
-            mcp_type = new_mcp.get('type', '')
-            
-            if mcp_type == 'composio':
-                profile_id = new_mcp.get('config', {}).get('profile_id')
-                if not profile_id:
-                    continue
-                    
-                for i, existing_mcp in enumerate(existing_custom_mcps):
-                    if (existing_mcp.get('type') == 'composio' and 
-                        existing_mcp.get('config', {}).get('profile_id') == profile_id):
-                        existing_custom_mcps[i] = new_mcp
-                        updated = True
-                        break
-                
-                if not updated:
-                    existing_custom_mcps.append(new_mcp)
-                    updated = True
-            else:
-                mcp_url = new_mcp.get('config', {}).get('url')
-                mcp_name = new_mcp.get('name', '')
-                
-                for i, existing_mcp in enumerate(existing_custom_mcps):
-                    if (existing_mcp.get('config', {}).get('url') == mcp_url or 
-                        (mcp_name and existing_mcp.get('name') == mcp_name)):
-                        existing_custom_mcps[i] = new_mcp
-                        updated = True
-                        break
-                
-                if not updated:
-                    existing_custom_mcps.append(new_mcp)
-                    updated = True
-        
-        tools['custom_mcp'] = existing_custom_mcps
-        agent_config['tools'] = tools
-        
-        from .versioning.version_service import get_version_service
-        import datetime
-        
-        try:
-            version_service = await get_version_service()
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            change_description = f"MCP tools update {timestamp}"
-            
-            new_version = await version_service.create_version(
-                agent_id=agent_id,
-                user_id=user_id,
-                system_prompt=agent_config.get('system_prompt', ''),
-                configured_mcps=agent_config.get('tools', {}).get('mcp', []),
-                custom_mcps=existing_custom_mcps,
-                agentpress_tools=agent_config.get('tools', {}).get('agentpress', {}),
-                change_description=change_description
-            )
-            logger.debug(f"Created version {new_version.version_id} for agent {agent_id}")
-            
-            total_enabled_tools = sum(len(mcp.get('enabledTools', [])) for mcp in new_custom_mcps)
-        except Exception as e:
-            logger.error(f"Failed to create version for custom MCP tools update: {e}")
-            raise HTTPException(status_code=500, detail="Failed to save changes")
-        
-        return {
-            'success': True,
-            'data': {
-                'custom_mcps': existing_custom_mcps,
-                'total_enabled_tools': total_enabled_tools
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating agent custom MCPs: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@router.get("/agents/{agent_id}/tools", summary="Get Agent Tools", operation_id="get_agent_tools")
+@router.get("/agents/{agent_id}/tools", response_model=AgentToolsResponse, summary="Get Agent Tools", operation_id="get_agent_tools")
 async def get_agent_tools(
-    agent_id: str,
-    user_id: str = Depends(verify_and_get_user_id_from_jwt)
+    agent: dict = Depends(require_agent_ownership),
+    version_service: VersionService = Depends(get_version_service)
 ):
-        
-    logger.debug(f"Fetching enabled tools for agent: {agent_id} by user: {user_id}")
-    client = await utils.db.client
-
-    agent_result = await client.table('agents').select('*').eq('agent_id', agent_id).execute()
-    if not agent_result.data:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    agent = agent_result.data[0]
-    if agent['account_id'] != user_id and not agent.get('is_public', False):
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    version_data = None
-    if agent.get('current_version_id'):
-        try:
-            version_service = await _get_version_service()
-
-            version_obj = await version_service.get_version(
-                agent_id=agent_id,
-                version_id=agent['current_version_id'],
-                user_id=user_id
-            )
-            version_data = version_obj.to_dict()
-        except Exception as e:
-            logger.warning(f"Failed to fetch version data for tools endpoint: {e}")
+    """Retrieves the complete tool configuration for the agent's active version."""
+    logger.debug(f"Getting tools for agent {agent['agent_id']}")
     
-    from .config_helper import extract_agent_config
-    agent_config = extract_agent_config(agent, version_data)
+    active_version = await _get_active_version_for_agent(agent, version_service)
     
-    agentpress_tools_config = agent_config['agentpress_tools']
-    configured_mcps = agent_config['configured_mcps'] 
-    custom_mcps = agent_config['custom_mcps']
+    return AgentToolsResponse(
+        agentpress_tools=active_version.agentpress_tools,
+        configured_mcps=active_version.configured_mcps,
+        custom_mcps=active_version.custom_mcps
+    )
 
-    agentpress_tools = []
-    for name, enabled in agentpress_tools_config.items():
-        is_enabled_tool = bool(enabled.get('enabled', False)) if isinstance(enabled, dict) else bool(enabled)
-        agentpress_tools.append({"name": name, "enabled": is_enabled_tool})
+@router.put("/agents/{agent_id}/tools", summary="Update Agent Tools", operation_id="update_agent_tools")
+async def update_agent_tools(
+    update_request: AgentToolsUpdateRequest,
+    agent: dict = Depends(require_agent_ownership),
+    version_service: VersionService = Depends(get_version_service)
+):
+    """
+    Updates the agent's tools by creating a new, activated version.
+    This replaces the entire tool configuration for the agent.
+    """
+    agent_id = agent['agent_id']
+    user_id = agent['account_id']
+    logger.debug(f"Updating tools for agent {agent_id} by user {user_id}")
 
-    mcp_tools = []
-    for mcp in configured_mcps + custom_mcps:
-        server = mcp.get('name')
-        enabled_tools = mcp.get('enabledTools') or mcp.get('enabled_tools') or []
-        for tool_name in enabled_tools:
-            mcp_tools.append({"name": tool_name, "server": server, "enabled": True})
-    return {"agentpress_tools": agentpress_tools, "mcp_tools": mcp_tools}
+    try:
+        # Get the current active version to use as a base for non-tool-related fields
+        active_version = await _get_active_version_for_agent(agent, version_service)
 
+        # Create a new version with the updated tools
+        new_version = await version_service.create_version(
+            agent_id=agent_id,
+            user_id=user_id,
+            # Carry over existing non-tool fields
+            system_prompt=active_version.system_prompt,
+            model=active_version.model,
+            # Replace tool fields with the new data from the request
+            agentpress_tools=update_request.agentpress_tools,
+            configured_mcps=update_request.configured_mcps,
+            custom_mcps=update_request.custom_mcps,
+            change_description="Updated agent tools"
+        )
+
+        # Activate the new version to make the changes live
+        await version_service.activate_version(agent_id, new_version.version_id, user_id)
+
+        logger.info(f"Successfully updated tools for agent {agent_id} by creating and activating new version {new_version.version_id}")
+        return {"success": True, "new_version_id": new_version.version_id}
+
+    except Exception as e:
+        logger.error(f"Error updating tools for agent {agent_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update agent tools.")

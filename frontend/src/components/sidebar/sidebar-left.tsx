@@ -3,15 +3,9 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { Bot, Menu, Plus, Zap, ChevronRight, BookOpen, Code, Star, Package, Sparkle, Sparkles, X, MessageCircle, PanelLeftOpen, Settings, LogOut, User, CreditCard, Key, Plug, Shield, DollarSign, KeyRound, Sun, Moon, Book, Database, PanelLeftClose } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
 
 import { NavAgents } from '@/components/sidebar/nav-agents';
-import { NavAgentsView } from '@/components/sidebar/nav-agents-view';
-import { NavGlobalConfig } from '@/components/sidebar/nav-global-config';
-import { NavTriggerRuns } from '@/components/sidebar/nav-trigger-runs';
-import { NavUserWithTeams } from '@/components/sidebar/nav-user-with-teams';
 import { KortixLogo } from '@/components/sidebar/kortix-logo';
-import { siteConfig } from '@/lib/home';
 import {
   Sidebar,
   SidebarContent,
@@ -28,15 +22,8 @@ import {
   SidebarTrigger,
   useSidebar,
 } from '@/components/ui/sidebar';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
-import { NewAgentDialog } from '@/components/agents/new-agent-dialog';
-import { ThreadSearchModal } from '@/components/sidebar/thread-search-modal';
+
 import { useEffect, useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { useTheme } from 'next-themes';
 import { useRouter } from 'next/navigation';
 import {
@@ -48,45 +35,6 @@ import { Button } from '@/components/ui/button';
 import { useIsMobile } from '@/hooks/utils';
 import { cn } from '@/lib/utils';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { useAdminRole } from '@/hooks/admin';
-import posthog from 'posthog-js';
-import { useDocumentModalStore } from '@/stores/use-document-modal-store';
-import { useSubscriptionData } from '@/stores/subscription-store';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import Image from 'next/image';
-import { isLocalMode } from '@/lib/config';
-import { KortixProcessModal } from './kortix-enterprise-modal';
-
-import { getPlanIcon, getPlanName } from '@/components/billing/plan-utils';
-import { Kbd } from '../ui/kbd';
-import { useTranslations } from 'next-intl';
-import { KbdGroup } from '../ui/kbd';
-
-// Helper function to get user initials
-function getInitials(name: string) {
-  return name
-    .split(' ')
-    .map((part) => part[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
-}
-
-function UserProfileSection({ user }: { user: any }) {
-  const { data: subscriptionData } = useSubscriptionData();
-  const { state } = useSidebar();
-  const isLocal = isLocalMode();
-  const planName = getPlanName(subscriptionData, isLocal);
-
-  // Return the enhanced user object with plan info for NavUserWithTeams
-  const enhancedUser = {
-    ...user,
-    planName,
-    planIcon: getPlanIcon(planName, isLocal)
-  };
-
-  return <NavUserWithTeams user={enhancedUser} />;
-}
 
 function FloatingMobileMenuButton() {
   const { setOpenMobile, openMobile, setOpen } = useSidebar();
@@ -121,44 +69,13 @@ function FloatingMobileMenuButton() {
 export function SidebarLeft({
   ...props
 }: React.ComponentProps<typeof Sidebar>) {
-  const t = useTranslations('sidebar');
   const { state, setOpen, setOpenMobile } = useSidebar();
   const isMobile = useIsMobile();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
-  const [activeView, setActiveView] = useState<'chats' | 'agents' | 'starred'>('chats');
-  const [showEnterpriseCard, setShowEnterpriseCard] = useState(true);
-  const [user, setUser] = useState<{
-    name: string;
-    email: string;
-    avatar: string;
-    isAdmin?: boolean;
-  }>({
-    name: 'Loading...',
-    email: 'loading@example.com',
-    avatar: '',
-    isAdmin: false,
-  });
 
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [showNewAgentDialog, setShowNewAgentDialog] = useState(false);
-  const [showSearchModal, setShowSearchModal] = useState(false);
-  const { isOpen: isDocumentModalOpen } = useDocumentModalStore();
-
-  // Update active view based on pathname
-  useEffect(() => {
-    if (pathname?.includes('/triggers') || pathname?.includes('/knowledge')) {
-      setActiveView('starred');
-    }
-  }, [pathname]);
-
-  // Logout handler
-  const handleLogout = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push('/login');
-  };
 
   useEffect(() => {
     if (isMobile) {
@@ -166,36 +83,9 @@ export function SidebarLeft({
     }
   }, [pathname, searchParams, isMobile, setOpenMobile]);
 
-
-  // Use React Query hook for admin role instead of direct fetch
-  const { data: adminRoleData } = useAdminRole();
-  const isAdmin = adminRoleData?.isAdmin ?? false;
-
-  useEffect(() => {
-    const fetchUserData = async () => {
-      const supabase = createClient();
-      const { data } = await supabase.auth.getUser();
-      if (data.user) {
-        setUser({
-          name:
-            data.user.user_metadata?.name ||
-            data.user.email?.split('@')[0] ||
-            'User',
-          email: data.user.email || '',
-          avatar: data.user.user_metadata?.avatar_url || '', // User avatar (different from agent avatar)
-          isAdmin: isAdmin, // Use React Query cached value
-        });
-      }
-    };
-
-    fetchUserData();
-  }, [isAdmin]);
-
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (isDocumentModalOpen) return;
 
-      // CMD+B to toggle sidebar
       if ((event.metaKey || event.ctrlKey) && event.key === 'b') {
         event.preventDefault();
         setOpen(!state.startsWith('expanded'));
@@ -205,30 +95,11 @@ export function SidebarLeft({
           }),
         );
       }
-
-      // CMD+K to open search modal
-      if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
-        event.preventDefault();
-        setShowSearchModal(true);
-      }
-
-      // CMD+J to open new chat
-      if ((event.metaKey || event.ctrlKey) && event.key === 'j') {
-        event.preventDefault();
-        posthog.capture('new_task_clicked', { source: 'keyboard_shortcut' });
-        router.push('/dashboard');
-        if (isMobile) {
-          setOpenMobile(false);
-        }
-      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [state, setOpen, isDocumentModalOpen, router, isMobile, setOpenMobile]);
-
-
-
+  }, [state, setOpen, router, isMobile, setOpenMobile]);
 
   return (
     <Sidebar
@@ -284,189 +155,63 @@ export function SidebarLeft({
         </div>
       </SidebarHeader >
       <SidebarContent className="[&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']">
-        <AnimatePresence mode="wait">
-          {state === 'collapsed' ? (
-            /* Collapsed layout: + button and 4 state buttons only */
-            <motion.div
-              key="collapsed"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15, ease: "easeOut" }}
-              className="px-6 pt-4 space-y-3 flex flex-col items-center"
-            >
-              {/* + button */}
-              <div className="w-full flex justify-center">
+          <div
+            className="flex flex-col h-full"
+          >
+            <div className="px-6 pt-4 space-y-4">
+              <div className="w-full">
                 <Button
                   variant="outline"
-                  size="icon"
-                  className="h-10 w-10 p-0 shadow-none"
+                  size="sm"
+                  className="w-full shadow-none justify-between h-10 px-4"
                   asChild
                 >
                   <Link
                     href="/dashboard"
                     onClick={() => {
-                      posthog.capture('new_task_clicked');
                       if (isMobile) setOpenMobile(false);
                     }}
                   >
-                    <Plus className="h-4 w-4" />
+                    <div className="flex items-center gap-2">
+                      <Plus className="h-4 w-4" />
+                      New Chat
+                    </div>
                   </Link>
                 </Button>
               </div>
+            </div>
 
-              {/* State buttons vertically */}
-              <div className="w-full flex flex-col items-center space-y-3">
-                {[
-                  { view: 'chats' as const, icon: MessageCircle },
-                  { view: 'agents' as const, icon: Bot },
-                  { view: 'starred' as const, icon: Zap },
-                ].map(({ view, icon: Icon }) => (
-                  <Button
-                    key={view}
-                    variant="ghost"
-                    size="icon"
-                    className={cn(
-                      "h-10 w-10 p-0 cursor-pointer hover:bg-card hover:border-[1.5px] hover:border-border",
-                      activeView === view ? 'bg-card border-[1.5px] border-border' : ''
-                    )}
-                    onClick={() => {
-                      setActiveView(view);
-                      setOpen(true); // Expand sidebar when clicking state button
-                    }}
-                  >
-                    <Icon className="!h-4 !w-4" />
-                  </Button>
-                ))}
-              </div>
-            </motion.div>
-          ) : (
-            /* Expanded layout */
-            <motion.div
-              key="expanded"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15, ease: "easeOut" }}
-              className="flex flex-col h-full"
-            >
-              <div className="px-6 pt-4 space-y-4">
-                {/* New Chat button */}
-                <div className="w-full">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full shadow-none justify-between h-10 px-4"
-                    asChild
-                  >
-                    <Link
-                      href="/dashboard"
-                      onClick={() => {
-                        posthog.capture('new_task_clicked');
-                        if (isMobile) setOpenMobile(false);
-                      }}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Plus className="h-4 w-4" />
-                        {t('newChat')}
-                      </div>
-                      <div className="flex items-center gap-1">
-                      <KbdGroup>
-                        <Kbd>⌘</Kbd>
-                        <Kbd>J</Kbd>
-                      </KbdGroup>
-                      </div>
-                    </Link>
-                  </Button>
-                </div>
-
-                {/* State buttons horizontally */}
-                <div className="flex justify-between items-center gap-2">
-                  {[
-                    { view: 'chats' as const, icon: MessageCircle, label: t('chats') },
-                    { view: 'agents' as const, icon: Bot, label: t('workers') },
-                    { view: 'starred' as const, icon: Zap, label: t('triggers') }
-                  ].map(({ view, icon: Icon, label }) => (
-                    <button
-                      key={view}
-                      className={cn(
-                        "flex flex-col items-center justify-center gap-1.5 p-1.5 rounded-2xl cursor-pointer transition-colors w-[64px] h-[64px]",
-                        "hover:bg-muted/60 hover:border-[1.5px] hover:border-border",
-                        activeView === view ? 'bg-card border-[1.5px] border-border' : 'border-[1.5px] border-transparent'
-                      )}
-                      onClick={() => setActiveView(view)}
-                    >
-                      <Icon className="!h-4 !w-4" />
-                      <span className="text-xs text-muted-foreground whitespace-nowrap">
-                        {label}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Content area */}
-              <div className="px-6 flex-1 overflow-hidden">
-                {activeView === 'chats' && <NavAgents />}
-                {activeView === 'agents' && <NavAgentsView />}
-                {activeView === 'starred' && (
-                  <>
-                    <NavGlobalConfig />
-                    <NavTriggerRuns />
-                  </>
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </SidebarContent>
-
-      {/* Enterprise Demo Card - Only show when expanded */}
-      {/* {
-        state !== 'collapsed' && showEnterpriseCard && (
-          <div className="absolute bottom-[86px] left-6 right-6 z-10">
-            <div className="rounded-2xl p-5 backdrop-blur-[12px] border-[1.5px] bg-gradient-to-br from-white/25 to-gray-300/25 dark:from-gray-600/25 dark:to-gray-800/25 border-gray-300/50 dark:border-gray-600/50">
-              <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="h-4 w-4" />
-                <span className="text-sm font-medium text-foreground">Enterprise Demo</span>
-
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="ml-auto h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
-                  onClick={() => setShowEnterpriseCard(false)}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground mb-4">
-                Request custom AI Workers implementation
-              </p>
-              <KortixProcessModal>
-                <Button size="sm" className="w-full text-xs h-8">
-                  Learn More
-                </Button>
-              </KortixProcessModal>
+            <div className="px-6 flex-1 overflow-hidden">
+                <NavAgents />
             </div>
           </div>
-        )
-      } */}
+      </SidebarContent>
 
       <div className={cn("pb-4", state === 'collapsed' ? "px-6" : "px-6")}>
-        <UserProfileSection user={user} />
+        <SidebarMenu>
+        <SidebarMenuButton hasSubmenu={false}>
+        <div className="flex items-center w-full justify-between">
+          <div className="flex items-center gap-2">
+            <Settings className="h-4 w-4" />
+            <span>Settings</span>
+          </div>
+        </div>
+        </SidebarMenuButton>
+        <SidebarMenuSub>
+          <SidebarMenuSubItem onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+            <div className="flex items-center justify-between w-full">
+              <span>Theme</span>
+              <div className="flex items-center gap-2">
+                <Sun className="h-4 w-4" /> / <Moon className="h-4 w-4" />
+              </div>
+            </div>
+            </SidebarMenuSubItem>
+        </SidebarMenuSub>
+        </SidebarMenu>
       </div>
       <SidebarRail />
-      <NewAgentDialog
-        open={showNewAgentDialog}
-        onOpenChange={setShowNewAgentDialog}
-      />
-      <ThreadSearchModal
-        open={showSearchModal}
-        onOpenChange={setShowSearchModal}
-      />
     </Sidebar >
   );
 }
 
-// Export the floating button so it can be used in the layout
 export { FloatingMobileMenuButton };
