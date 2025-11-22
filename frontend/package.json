@@ -11,7 +11,6 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@calcom/embed-react": "^1.5.2",
     "@codemirror/view": "^6.38.1",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
@@ -90,10 +89,6 @@
     "@uiw/codemirror-theme-vscode": "^4.23.10",
     "@uiw/codemirror-theme-xcode": "^4.23.10",
     "@uiw/react-codemirror": "^4.23.10",
-    "@usebasejump/shared": "^0.0.3",
-    "@vercel/analytics": "^1.5.0",
-    "@vercel/edge-config": "^1.4.0",
-    "@vercel/speed-insights": "^1.2.0",
     "autoprefixer": "10.4.17",
     "canvas": "^3.1.0",
     "class-variance-authority": "^0.7.1",
@@ -136,8 +131,6 @@
     "papaparse": "^5.5.2",
     "pdfjs-dist": "4.8.69",
     "postcss": "8.4.33",
-    "posthog-js": "^1.258.6",
-    "posthog-node": "^5.6.0",
     "radix-ui": "^1.4.3",
     "react": "^18",
     "react-color-palette": "^7.3.1",

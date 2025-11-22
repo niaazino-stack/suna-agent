@@ -2,7 +2,6 @@ import { ThemeProvider } from '@/components/home/theme-provider';
 import { siteConfig } from '@/lib/site';
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
-import { AuthProvider } from '@/components/AuthProvider';
 import { ReactQueryProvider } from './react-query-provider';
 import { Toaster } from '@/components/ui/sonner';
 import { Analytics } from '@vercel/analytics/react';
@@ -13,7 +12,6 @@ import { PostHogIdentify } from '@/components/posthog-identify';
 import '@/lib/polyfills';
 import { roobert } from './fonts/roobert';
 import { roobertMono } from './fonts/roobert-mono';
-import { PlanSelectionModal } from '@/components/billing/pricing/plan-selection-modal';
 import { Suspense } from 'react';
 import { I18nProvider } from '@/components/i18n-provider';
 
@@ -180,7 +178,7 @@ export default function RootLayout({
           {`(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
           new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
           j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-          'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+          'https.://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
           })(window,document,'script','dataLayer','GTM-PCHSN4M2');`}
         </Script>
         <Script async src="https://cdn.tolt.io/tolt.js" data-tolt={process.env.NEXT_PUBLIC_TOLT_REFERRAL_ID}></Script>
@@ -204,15 +202,12 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <I18nProvider>
-          <AuthProvider>
             <ReactQueryProvider>
               {children}
               <Toaster />
               <Suspense fallback={null}>
-                <PlanSelectionModal />
               </Suspense>
             </ReactQueryProvider>
-          </AuthProvider>
           </I18nProvider>
           <Analytics />
           <GoogleAnalytics gaId="G-6ETJFB3PT3" />
