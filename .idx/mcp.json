@@ -149,6 +149,7 @@
       "firebase_get_security_rules",
       "firebase_read_resources"
     ],
-    "thinking": []
+    "thinking": [],
+    "playwright": []
   }
 }
